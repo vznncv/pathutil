@@ -1,0 +1,11 @@
+## Ingore IDE specific files
+
+# QtCreator
+*.autosave
+
+# vim swap files
+*.swp
+*~
+
+# JetBrains
+.idea
