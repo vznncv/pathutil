@@ -5,10 +5,10 @@ using namespace pathutil;
 
 #define SEP '/'
 
-static int rmtree_impl(char* path_buff, size_t path_len, size_t buff_len)
+static int rmtree_impl(char *path_buff, size_t path_len, size_t buff_len)
 {
-    DIR* dir;
-    struct dirent* dir_entity;
+    DIR *dir;
+    struct dirent *dir_entity;
     int ret_code = 0;
     int tmp_ret_code;
     int origin_errno;
@@ -78,7 +78,7 @@ static int rmtree_impl(char* path_buff, size_t path_len, size_t buff_len)
 
 #define DEFAULT_RMTREE_BUFF_SIZE 256
 
-int pathutil::rmtree(const char* path, char* buff, size_t buff_len)
+int pathutil::rmtree(const char *path, char *buff, size_t buff_len)
 {
     bool cleanup_buff = false;
     int ret_code = 0;
@@ -110,13 +110,13 @@ int pathutil::rmtree(const char* path, char* buff, size_t buff_len)
     return ret_code;
 }
 
-int pathutil::makedirs(const char* path, mode_t mode, bool exists_ok, char* buff, size_t buff_len)
+int pathutil::makedirs(const char *path, mode_t mode, bool exists_ok, char *buff, size_t buff_len)
 {
     bool cleanup_buff = false;
     int ret_code = 0;
-    char* pos;
-    char* first_existed_pos;
-    char* buff_end;
+    char *pos;
+    char *first_existed_pos;
+    char *buff_end;
     char sym;
     bool is_dir_flag;
     // note due mbed-os implementation, we cannot explicitly create directories in the root "/",
@@ -198,7 +198,7 @@ int pathutil::makedirs(const char* path, mode_t mode, bool exists_ok, char* buff
     return ret_code;
 }
 
-bool pathutil::isdir(const char* path)
+bool pathutil::isdir(const char *path)
 {
     struct stat path_stat;
     if (stat(path, &path_stat)) {
@@ -209,7 +209,7 @@ bool pathutil::isdir(const char* path)
     }
 }
 
-bool pathutil::isfile(const char* path)
+bool pathutil::isfile(const char *path)
 {
     struct stat path_stat;
     if (stat(path, &path_stat)) {
@@ -220,7 +220,7 @@ bool pathutil::isfile(const char* path)
     }
 }
 
-bool pathutil::exists(const char* path)
+bool pathutil::exists(const char *path)
 {
     struct stat path_stat;
     if (stat(path, &path_stat)) {
@@ -231,7 +231,7 @@ bool pathutil::exists(const char* path)
     }
 }
 
-ssize_t pathutil::getsize(const char* path)
+ssize_t pathutil::getsize(const char *path)
 {
     struct stat path_stat;
     if (stat(path, &path_stat)) {
@@ -241,7 +241,7 @@ ssize_t pathutil::getsize(const char* path)
     }
 }
 
-bool pathutil::isabs(const char* path)
+bool pathutil::isabs(const char *path)
 {
     if (path[0] == '\0') {
         return false;
@@ -250,7 +250,7 @@ bool pathutil::isabs(const char* path)
     }
 }
 
-int pathutil::join_paths(char* output_path, size_t n, const char* path_l, const char* path_r)
+int pathutil::join_paths(char *output_path, size_t n, const char *path_l, const char *path_r)
 {
     size_t part_l_len = strlen(path_l);
     size_t part_r_len = strlen(path_r);
@@ -280,10 +280,10 @@ int pathutil::join_paths(char* output_path, size_t n, const char* path_l, const 
     return ret_code;
 }
 
-int pathutil::join_paths(char* output_path, const char* path_l, const char* path_r)
+int pathutil::join_paths(char *output_path, const char *path_l, const char *path_r)
 {
-    char* out_pos;
-    const char* pos;
+    char *out_pos;
+    const char *pos;
     int ret_code = 0;
 
     if (isabs(path_r) || *path_l == '\0') {
@@ -305,10 +305,9 @@ int pathutil::join_paths(char* output_path, const char* path_l, const char* path
     return ret_code;
 }
 
-int pathutil::append_path(char* path, size_t n, const char* path_r)
+int pathutil::append_path(char *path, size_t n, const char *path_r)
 {
     int ret_code = 0;
-    char* pos;
     size_t path_r_len = strlen(path_r);
     size_t path_len;
 
@@ -336,10 +335,10 @@ int pathutil::append_path(char* path, size_t n, const char* path_r)
     return ret_code;
 }
 
-int pathutil::append_path(char* path, const char* path_r)
+int pathutil::append_path(char *path, const char *path_r)
 {
     int ret_code = 0;
-    char* pos;
+    char *pos;
 
     if (isabs(path_r) || path[0] == '\0') {
         strcpy(path, path_r);
@@ -355,16 +354,16 @@ int pathutil::append_path(char* path, const char* path_r)
     return ret_code;
 }
 
-int pathutil::normpath(char* path)
+int pathutil::normpath(char *path)
 {
-    char* pos = path - 1;
+    char *pos = path - 1;
     bool stop_flag = false;
     bool abs_flag = false;
     char sym;
-    char* new_pos = path;
-    char* prev_sep = path - 1;
+    char *new_pos = path;
+    char *prev_sep = path - 1;
     ssize_t sep_dist;
-    char* prev_prev_sep;
+    char *prev_prev_sep;
 
     sym = *path;
     // skip empty path
@@ -437,9 +436,119 @@ int pathutil::normpath(char* path)
     return 0;
 }
 
-int pathutil::write_data(const char* path, const uint8_t* data, size_t len)
+static int find_lsep(const char *path, const char *&lsep_pos)
 {
-    FILE* file;
+    size_t path_len = strlen(path);
+    int i = (int)path_len - 1;
+    while (i >= 0 && path[i] != SEP) {
+        i--;
+    }
+    lsep_pos = path + i;
+    return 0;
+}
+
+int pathutil::basename(char *basename, size_t n, const char *path)
+{
+    const char *basename_start;
+    find_lsep(path, basename_start);
+    basename_start += 1;
+    size_t basename_len = strlen(basename_start);
+    if (basename_len > n) {
+        return -1;
+    }
+    strcpy(basename, basename_start);
+    return 0;
+}
+
+int pathutil::basename(char *basename, const char *path)
+{
+    const char *basename_start;
+    find_lsep(path, basename_start);
+    basename_start += 1;
+    strcpy(basename, basename_start);
+    return 0;
+}
+
+int dirname_impl(char *dirpath, int n, const char *path)
+{
+    int err;
+    const char *sep_start;
+    find_lsep(path, sep_start);
+    // remove multiple separators
+    while (sep_start > path && *(sep_start - 1) == SEP) {
+        sep_start--;
+    }
+
+    int sep_start_i = sep_start - path;
+    if (sep_start_i < 0) {
+        // empty base path
+        dirpath[0] = '\0';
+        err = 0;
+    } else if (sep_start_i == 0) {
+        // dirname should be "/"
+        if (n >= 0 && n < 1) {
+            err = -1;
+        } else {
+            strcpy(dirpath, "/");
+            err = 0;
+        }
+    } else {
+        if (n >= 0 && sep_start_i > n) {
+            err = -1;
+        } else {
+            if (path != dirpath) {
+                strncpy(dirpath, path, (size_t)sep_start_i);
+            }
+            dirpath[sep_start_i] = '\0';
+            err = 0;
+        }
+    }
+    return err;
+}
+
+int pathutil::dirname(char *path)
+{
+    return dirname_impl(path, -1, path);
+}
+
+int pathutil::dirname(char *dirpath, size_t n, const char *path)
+{
+    return dirname_impl(dirpath, n, path);
+}
+
+int pathutil::dirname(char *dirpath, const char *path)
+{
+    return dirname_impl(dirpath, -1, path);
+}
+
+bool pathutil::is_child_dirent(const char *name)
+{
+    if (name[0] == '.') {
+        if (name[1] == '.') {
+            return name[2] != '\0';
+        } else {
+            return name[1] != '\0';
+        }
+    }
+    return true;
+}
+
+bool pathutil::is_child_dirent(dirent *dir_ent)
+{
+    return is_child_dirent(dir_ent->d_name);
+}
+
+struct dirent *pathutil::readdir_child(DIR *dirp)
+{
+    struct dirent *dir_ent;
+    while ((dir_ent = readdir(dirp)) != NULL && !is_child_dirent(dir_ent->d_name)) {
+    };
+    return dir_ent;
+}
+
+int pathutil::write_data(const char *path, const uint8_t *data, size_t len)
+{
+    FILE *file;
     int ret_code = 0;
     int close_ret_code = 0;
     size_t write_res;
@@ -461,13 +570,13 @@ int pathutil::write_data(const char* path, const uint8_t* data, size_t len)
     return ret_code;
 }
 
-int pathutil::read_data(const char* path, uint8_t* data, size_t len)
+int pathutil::read_data(const char *path, uint8_t *data, size_t len)
 {
-    FILE* file;
+    FILE *file;
     int ret_code = 0;
     int close_ret_code = 0;
-    int read_size;
-    int file_size;
+    int read_size = 0;
+    int file_size = 0;
 
     if ((file = fopen(path, "rb")) == NULL) {
         return -1;
@@ -478,11 +587,15 @@ int pathutil::read_data(const char* path, uint8_t* data, size_t len)
     file_size = ftell(file);
     rewind(file);
 
-    if (file_size > len) {
+    if (file_size < 0) {
+        ret_code = -1;
+        errno = EIO;
+
+    } else if ((size_t)file_size > len) {
         ret_code = -1;
         errno = ENOBUFS;
     } else {
-        read_size = fread(data, sizeof(uint8_t), len, file);
+        read_size = (int)fread(data, sizeof(uint8_t), len, file);
         if (read_size != file_size) {
             ret_code = -1;
             errno = EIO;
@@ -495,4 +608,19 @@ int pathutil::read_data(const char* path, uint8_t* data, size_t len)
     }
 
     return ret_code ? ret_code : read_size;
+}
+
+int pathutil::write_str(const char *path, const char *text)
+{
+    return write_data(path, (const uint8_t *)text, strlen(text));
+}
+
+int pathutil::read_str(const char *path, char *text, size_t len)
+{
+    int res = read_data(path, (uint8_t *)text, len - 1);
+    if (res < 0) {
+        return res;
+    }
+    text[res] = '\0';
+    return res;
 }
