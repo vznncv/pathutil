@@ -1,647 +1,583 @@
 /**
- * Tests for functions that modify path, and don't require real file system.
+ * Tests for functions that requires file system.
  */
-#include "string.h"
-
 #include "greentea-client/test_env.h"
 #include "mbed.h"
 #include "rtos.h"
 #include "unity.h"
 #include "utest.h"
+#include <stdio.h>
 
+#include "HeapBlockDevice.h"
+#include "LittleFileSystem.h"
 #include "pathutil.h"
 
-using namespace utest::v1;
 using namespace pathutil;
 
+using namespace utest::v1;
+
 //--------------------------------------------------------------------------------
-// Test normpath function
+// test file system configuration
 //--------------------------------------------------------------------------------
-void assert_normpath_result(const char *input_path, const char *expected)
+
+static HeapBlockDevice *hb_ptr;
+static LittleFileSystem *fs_ptr;
+
+status_t unite_status(status_t s1, status_t s2)
+{
+    if (s1 == STATUS_ABORT || s2 == STATUS_ABORT) {
+        return STATUS_ABORT;
+    }
+    if (s2 == STATUS_IGNORE || s2 == STATUS_IGNORE) {
+        return STATUS_IGNORE;
+    }
+    return s1;
+}
+
+utest::v1::status_t case_setup_handler(const Case *const source, const size_t index_of_case)
+{
+    status_t status = STATUS_CONTINUE;
+
+    // allocated 16 KB of memory for tests
+    hb_ptr = new HeapBlockDevice(64 * 256, 64);
+    fs_ptr = new LittleFileSystem("test_bd");
+
+    // create file system and mount it
+    fs_ptr->mount(hb_ptr);
+    int err = fs_ptr->reformat(hb_ptr);
+    if (err) {
+        status = STATUS_ABORT;
+    }
+    errno = 0;
+    return unite_status(status, greentea_case_setup_handler(source, index_of_case));
+}
+
+utest::v1::status_t case_teardown_handler(const Case *const source, const size_t passed, const size_t failed, const failure_t failure)
+{
+
+    fs_ptr->unmount();
+    delete fs_ptr;
+    delete hb_ptr;
+
+    return greentea_case_teardown_handler(source, passed, failed, failure);
+}
+
+static const char *BASE_DIR = "/test_bd";
+
+static int verify_success(int err, const char *expr, int line_no = -1)
+{
+    if (err) {
+        char *message = new char[96 + strlen(expr)];
+        sprintf(message, "The expression \"%s\" has failed. It returned %i, but it's expected 0", expr, err);
+        UNITY_TEST_FAIL(line_no, message);
+        delete[] message;
+    }
+    return err;
+}
+
+#define VERIFY_SUCCESS(expr) verify_success(expr, #expr, __LINE__)
+
+static int verify_success_or_length(int err, const char *expr, int line_no)
+{
+    if (err < 0) {
+        char *message = new char[96 + strlen(expr)];
+        sprintf(message, "The expression \"%s\" has failed. It returned %i, but it's expected non-negative value ", expr, err);
+        UNITY_TEST_FAIL(line_no, message);
+        delete[] message;
+    }
+    return err;
+}
+
+#define VERIFY_SUCCESS_OR_LENGTH(expr) verify_success_or_length(expr, #expr, __LINE__)
+
+//--------------------------------------------------------------------------------
+// Test helper function to write/read small files
+//--------------------------------------------------------------------------------
+void test_write_data_1()
+{
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "test.txt");
+
+    // write test data
+    const size_t data_len = 12;
+    const uint8_t data[data_len] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+    write_data(file_path, data, data_len);
+
+    // read test data
+    FILE *file = fopen(file_path, "r");
+    TEST_ASSERT_NOT_NULL(file);
+    const size_t read_buff_len = 32;
+    uint8_t read_buff[read_buff_len];
+    size_t read_len = fread(read_buff, 1, read_buff_len, file);
+    // check read results
+    TEST_ASSERT_EQUAL_UINT(data_len, read_len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(data, read_buff, data_len);
+    TEST_ASSERT_EQUAL(0, errno);
+}
+
+void test_read_data_1()
+{
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "test.txt");
+
+    // write test data
+    const size_t data_len = 12;
+    const uint8_t data[data_len] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 7, 6, 5 };
+    FILE *file = fopen(file_path, "w");
+    TEST_ASSERT_NOT_NULL(file);
+    fwrite(data, 1, data_len, file);
+    fclose(file);
+    TEST_ASSERT_EQUAL(0, errno);
+
+    // read test data
+    const size_t read_buff_len = 32;
+    uint8_t read_buff[read_buff_len];
+    int read_len = read_data(file_path, read_buff, read_buff_len);
+    // check read results
+    TEST_ASSERT_EQUAL(data_len, read_len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(data, read_buff, data_len);
+    TEST_ASSERT_EQUAL(0, errno);
+}
+
+void test_write_str_1()
+{
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "test.txt");
+
+    // write test data
+    const char *text = "hello world";
+    const size_t text_len = strlen(text);
+    write_str(file_path, text);
+
+    // read test data
+    FILE *file = fopen(file_path, "r");
+    TEST_ASSERT_NOT_NULL(file);
+    const size_t read_buff_len = 32;
+    char read_buff[read_buff_len];
+    size_t read_len = fread(read_buff, 1, read_buff_len, file);
+    read_buff[read_len] = '\0';
+    // check read results
+    TEST_ASSERT_EQUAL(text_len, read_len);
+    TEST_ASSERT_EQUAL_STRING(text, read_buff);
+    TEST_ASSERT_EQUAL(0, errno);
+}
+
+void test_read_str_1()
+{
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "test.txt");
+
+    // write test data
+    const char *text = "hello world";
+    const size_t text_len = strlen(text);
+    FILE *file = fopen(file_path, "w");
+    TEST_ASSERT_NOT_NULL(file);
+    fwrite(text, 1, text_len, file);
+    fclose(file);
+    TEST_ASSERT_EQUAL(0, errno);
+
+    // read test data
+    const size_t read_buff_len = 32;
+    char read_buff[read_buff_len];
+    int read_len = read_str(file_path, read_buff, read_buff_len);
+    // check read results
+    TEST_ASSERT_EQUAL(text_len, read_len);
+    TEST_ASSERT_EQUAL_STRING(text, read_buff);
+    TEST_ASSERT_EQUAL(0, errno);
+}
+
+//--------------------------------------------------------------------------------
+// Test helper function create/delete folders
+//--------------------------------------------------------------------------------
+
+void test_makedirs_1()
+{
+    int ret_code;
+    char dir_path[64];
+    join_paths(dir_path, BASE_DIR, "abc/some_dir/test");
+
+    // create test directory
+    ret_code = makedirs(dir_path, 0777);
+    TEST_ASSERT_EQUAL(0, ret_code);
+    TEST_ASSERT_EQUAL(true, exists(dir_path));
+    TEST_ASSERT_EQUAL(0, errno);
+
+    // try to create directory again
+    ret_code = makedirs(dir_path, 0777);
+    TEST_ASSERT_NOT_EQUAL(0, ret_code);
+    TEST_ASSERT_EQUAL(true, exists(dir_path));
+    TEST_ASSERT_NOT_EQUAL(0, errno);
+    errno = 0;
+
+    // try to create directory again with corresponding flag
+    ret_code = makedirs(dir_path, 0777, true);
+    TEST_ASSERT_EQUAL(0, ret_code);
+    TEST_ASSERT_EQUAL(true, exists(dir_path));
+    TEST_ASSERT_EQUAL(0, errno);
+}
+
+void test_rmtree_1()
 {
     char path[128];
-    strcpy(path, input_path);
-    int ret_code = normpath(path);
+
+    // create directory wit test content
+    join_paths(path, BASE_DIR, "test/test_dir/dir_abc");
+    makedirs(path);
+    join_paths(path, BASE_DIR, "test/test_dir/dir_abc/test_file_1.txt");
+    write_data(path, (const uint8_t *)"test 1", 5);
+    join_paths(path, BASE_DIR, "test/test_dir/test_file_2.txt");
+    write_data(path, (const uint8_t *)"test 2", 5);
+    TEST_ASSERT_EQUAL(0, errno);
+
+    join_paths(path, BASE_DIR, "test/test_dir");
+    TEST_ASSERT_EQUAL(true, exists(path));
+    int ret_code = rmtree(path);
     TEST_ASSERT_EQUAL(0, ret_code);
-    TEST_ASSERT_EQUAL_STRING(expected, path);
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(false, exists(path));
+
+    join_paths(path, BASE_DIR, "test");
+    TEST_ASSERT_EQUAL(true, exists(path));
 }
 
-void test_normpath_simple_1()
+void test_rmtree_2()
 {
-    assert_normpath_result("/some/path/test.txt", "/some/path/test.txt");
+    char path[128];
+    join_paths(path, BASE_DIR, "test/test_dir");
+    makedirs(path);
+    TEST_ASSERT_EQUAL(true, exists(path));
+
+    int ret_code = rmtree(path);
+    TEST_ASSERT_EQUAL(0, ret_code);
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(false, exists(path));
 }
 
-void test_normpath_collapse_dot_1()
+void test_rmtree_3()
 {
-    assert_normpath_result("./file.txt", "file.txt");
+    char path[128];
+    join_paths(path, BASE_DIR, "test/test_dir");
+    TEST_ASSERT_EQUAL(false, exists(path));
+
+    int ret_code = rmtree(path);
+    TEST_ASSERT_NOT_EQUAL(0, ret_code);
+    TEST_ASSERT_NOT_EQUAL(0, errno);
 }
 
-void test_normpath_collapse_dot_2()
+template <int n, int m>
+static int create_test_entities(const char *base_dir, int (&file_ids)[n], int (&dir_ids)[m])
 {
-    assert_normpath_result("/path/./a/././test", "/path/a/test");
+    char path_buf[128];
+    char name_buf[32];
+
+    for (int i = 0; i < n; i++) {
+        sprintf(name_buf, "file_%i", file_ids[i]);
+        join_paths(path_buf, base_dir, name_buf);
+        VERIFY_SUCCESS_OR_LENGTH(write_str(path_buf, "test content"));
+    }
+
+    for (int i = 0; i < m; i++) {
+        sprintf(name_buf, "dir_%i", dir_ids[i]);
+        join_paths(path_buf, base_dir, name_buf);
+        VERIFY_SUCCESS(mkdir(path_buf, 0777));
+    }
+
+    return 0;
 }
 
-void test_normpath_collapse_sep_1()
+template <int n, int m>
+static int delete_test_entities(const char *base_dir, int (&file_ids)[n], int (&dir_ids)[m])
 {
-    assert_normpath_result("///pp///sdf///", "/pp/sdf");
+    char path_buf[128];
+    char name_buf[32];
+
+    for (int i = 0; i < n; i++) {
+        sprintf(name_buf, "file_%i", file_ids[i]);
+        join_paths(path_buf, base_dir, name_buf);
+        VERIFY_SUCCESS(remove(path_buf));
+    }
+
+    for (int i = 0; i < m; i++) {
+        sprintf(name_buf, "dir_%i", dir_ids[i]);
+        join_paths(path_buf, base_dir, name_buf);
+        VERIFY_SUCCESS(remove(path_buf));
+    }
+
+    return 0;
 }
 
-void test_normpath_collapse_sep_2()
+void test_rmtree_4()
 {
-    assert_normpath_result("ff//", "ff");
+    char test_dir_path[128];
+    join_paths(test_dir_path, BASE_DIR, "test/test_dir");
+    makedirs(test_dir_path);
+    TEST_ASSERT_EQUAL(true, exists(test_dir_path));
+
+    // create and remove entities inside directory multiple times
+    int file_ids_1[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    int dir_ids_1[] = { 1, 2, 3, 4 };
+    create_test_entities(test_dir_path, file_ids_1, dir_ids_1);
+    int file_ids_2[] = { 1, 2, 7, 8 };
+    int dir_ids_2[] = { 3, 4 };
+    delete_test_entities(test_dir_path, file_ids_2, dir_ids_2);
+    int file_ids_3[] = { 5, 6, 9, 10, 11, 12, 13, 14 };
+    int dir_ids_3[] = { 3, 4, 7, 8 };
+    create_test_entities(test_dir_path, file_ids_3, dir_ids_3);
+    int file_ids_4[] = { 14, 3, 13 };
+    int dir_ids_4[] = { 1, 4, 8 };
+    delete_test_entities(test_dir_path, file_ids_4, dir_ids_4);
+
+    int ret_code = rmtree(test_dir_path);
+    TEST_ASSERT_EQUAL(0, ret_code);
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(false, exists(test_dir_path));
 }
 
-void test_normpath_collapse_dot_sep_1()
+int count_dir_entities(const char *path)
 {
-    assert_normpath_result("/path//./test.txt", "/path/test.txt");
+    struct dirent *dir_entity;
+    DIR *dir;
+    int count = 0;
+    int err;
+
+    if ((dir = opendir(path)) == NULL) {
+        return -1;
+    }
+    while ((dir_entity = readdir(dir)) != NULL) {
+        // ignore special entries "." and ".."
+        if (!is_child_dirent(dir_entity)) {
+            continue;
+        }
+        count++;
+    }
+    err = closedir(dir);
+    if (err) {
+        return -1;
+    }
+
+    return count;
 }
 
-void test_normpath_collapse_dot_sep_2()
+void test_cleartree_1()
 {
-    assert_normpath_result("/path//.//test.txt//.//.///", "/path/test.txt");
+    char path[128];
+
+    // create directory wit test content
+    join_paths(path, BASE_DIR, "test/test_dir/dir_abc");
+    makedirs(path);
+    join_paths(path, BASE_DIR, "test/test_dir/dir_abc/test_file_1.txt");
+    write_data(path, (const uint8_t *)"test 1", 5);
+    join_paths(path, BASE_DIR, "test/test_dir/test_file_2.txt");
+    write_data(path, (const uint8_t *)"test 2", 5);
+    TEST_ASSERT_EQUAL(0, errno);
+
+    join_paths(path, BASE_DIR, "test/test_dir");
+    TEST_ASSERT_EQUAL(true, exists(path));
+    int ret_code = cleartree(path);
+    TEST_ASSERT_EQUAL(0, ret_code);
+    TEST_ASSERT_EQUAL(0, errno);
+
+    TEST_ASSERT_EQUAL(0, count_dir_entities(path));
+    TEST_ASSERT_EQUAL(true, exists(path));
+    join_paths(path, BASE_DIR, "test");
+    TEST_ASSERT_EQUAL(true, exists(path));
 }
 
-void test_normpath_collapse_dot_sep_3()
+void test_cleartree_2()
 {
-    assert_normpath_result(".//./", ".");
+    char path[128];
+    join_paths(path, BASE_DIR, "test/test_dir");
+    makedirs(path);
+    TEST_ASSERT_EQUAL(true, exists(path));
+
+    int ret_code = cleartree(path);
+    TEST_ASSERT_EQUAL(0, ret_code);
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(true, exists(path));
+    TEST_ASSERT_EQUAL(0, count_dir_entities(path));
 }
 
-void test_normpath_collapse_dot_sep_4()
+void test_cleartree_3()
 {
-    assert_normpath_result("./", ".");
+    char path[128];
+    join_paths(path, BASE_DIR, "test/test_dir");
+    TEST_ASSERT_EQUAL(false, exists(path));
+
+    int ret_code = cleartree(path);
+    TEST_ASSERT_NOT_EQUAL(0, ret_code);
+    TEST_ASSERT_NOT_EQUAL(0, errno);
+}
+//--------------------------------------------------------------------------------
+// Test helper function to check files
+//--------------------------------------------------------------------------------
+
+void test_isdir_1()
+{
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "some_file.txt");
+    write_data(file_path, (const uint8_t *)"abcd", 4);
+
+    char dir_path[64];
+    join_paths(dir_path, BASE_DIR, "some_dir/test");
+    makedirs(dir_path);
+
+    char nothing_path[64];
+    join_paths(nothing_path, BASE_DIR, "some_dir/note_exists.d");
+
+    TEST_ASSERT_EQUAL(false, isdir(file_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(true, isdir(dir_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(false, isdir(nothing_path));
+    TEST_ASSERT_EQUAL(0, errno);
 }
 
-void test_normpath_collapse_dot_sep_5()
+void test_isfile_1()
 {
-    assert_normpath_result(".//.", ".");
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "some_file.txt");
+    write_data(file_path, (const uint8_t *)"abcd", 4);
+
+    char dir_path[64];
+    join_paths(dir_path, BASE_DIR, "some_dir/test");
+    makedirs(dir_path);
+
+    char nothing_path[64];
+    join_paths(nothing_path, BASE_DIR, "some_dir/note_exists.d");
+
+    TEST_ASSERT_EQUAL(true, isfile(file_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(false, isfile(dir_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(false, isfile(nothing_path));
+    TEST_ASSERT_EQUAL(0, errno);
 }
 
-void test_normpath_collapse_dotdot_1()
+void test_exists_1()
 {
-    assert_normpath_result("/test/abc/../cdb", "/test/cdb");
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "some_file.txt");
+    write_data(file_path, (const uint8_t *)"abcd", 4);
+
+    char dir_path[64];
+    join_paths(dir_path, BASE_DIR, "some_dir/test");
+    makedirs(dir_path);
+
+    char nothing_path[64];
+    join_paths(nothing_path, BASE_DIR, "some_dir/note_exists.d");
+
+    TEST_ASSERT_EQUAL(true, exists(file_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(true, exists(dir_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(false, exists(nothing_path));
+    TEST_ASSERT_EQUAL(0, errno);
 }
 
-void test_normpath_collapse_dotdot_2()
+void test_getsize_1()
 {
-    assert_normpath_result("/test/..", "/");
-}
+    char file_path[64];
+    join_paths(file_path, BASE_DIR, "some_file.txt");
+    write_data(file_path, (const uint8_t *)"abcd", 4);
 
-void test_normpath_collapse_dotdot_3()
-{
-    assert_normpath_result("/test/test/../..", "/");
-}
-void test_normpath_collapse_dotdot_4()
-{
-    assert_normpath_result("test/abc/../..", ".");
-}
+    char dir_path[64];
+    join_paths(dir_path, BASE_DIR, "some_dir/test");
+    makedirs(dir_path);
 
-void test_normpath_collapse_dotdot_5()
-{
-    assert_normpath_result("/..", "/");
-}
-void test_normpath_collapse_dotdot_6()
-{
-    assert_normpath_result("/../..", "/");
-}
+    char nothing_path[64];
+    join_paths(nothing_path, BASE_DIR, "some_dir/note_exists.d");
 
-void test_normpath_collapse_dotdot_7()
-{
-    assert_normpath_result("/test/../..", "/");
-}
-
-void test_normpath_collapse_dotdot_8()
-{
-    assert_normpath_result("test/../..", "..");
-}
-
-void test_normpath_collapse_dotdot_9()
-{
-    assert_normpath_result("/../...", "/...");
-}
-
-void test_normpath_collapse_mix_1()
-{
-    assert_normpath_result("/path//.//test.txt//.//..///", "/path");
-}
-
-void test_normpath_empty_1()
-{
-    assert_normpath_result("", "");
+    TEST_ASSERT_EQUAL(4, getsize(file_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_NOT_EQUAL(-1, getsize(dir_path));
+    TEST_ASSERT_EQUAL(0, errno);
+    TEST_ASSERT_EQUAL(-1, getsize(nothing_path));
+    TEST_ASSERT_NOT_EQUAL(0, errno);
 }
 
 //--------------------------------------------------------------------------------
-// Test joinpath and isasb functions
+// Test helper function to read directory
 //--------------------------------------------------------------------------------
-void assert_isabs_result(const char *path, bool expected_res)
-{
-    bool res = isabs(path);
-    TEST_ASSERT_EQUAL(expected_res, res);
-}
 
-void test_isabs_1()
+void test_readdir_child_1()
 {
-    assert_isabs_result("/some/path", true);
-}
+    char dir_path[64];
+    join_paths(dir_path, BASE_DIR, "test_dir");
+    mkdir(dir_path, 0777);
 
-void test_isabs_2()
-{
-    assert_isabs_result("some/path", false);
-}
+    char file_path[64];
+    join_paths(file_path, dir_path, "file_1.txt");
+    write_str(file_path, "hello world");
+    join_paths(file_path, dir_path, "file_2.txt");
+    write_str(file_path, "hello world");
+    join_paths(file_path, dir_path, "file_3.txt");
+    write_str(file_path, "hello world");
 
-void test_isabs_3()
-{
-    assert_isabs_result("../some/path", false);
-}
+    int num_files = 0;
+    DIR *dir_p;
+    struct dirent *dirent_p;
 
-void test_isabs_4()
-{
-    assert_isabs_result("", false);
-}
-
-void test_isabs_5()
-{
-    assert_isabs_result("/", true);
-}
-
-void assert_join_paths_res(const char *path_l, const char *path_r, const char *expected_path)
-{
-    char buff[128];
-    int ret_code = join_paths(buff, path_l, path_r);
-    TEST_ASSERT_EQUAL(ret_code, 0);
-    TEST_ASSERT_EQUAL_STRING(expected_path, buff);
-}
-
-void test_join_paths_1()
-{
-    assert_join_paths_res("/some/dir", "abc/1", "/some/dir/abc/1");
-}
-
-void test_join_paths_2()
-{
-    assert_join_paths_res("/some/dir/", "abc/1", "/some/dir/abc/1");
-}
-
-void test_join_paths_3()
-{
-    assert_join_paths_res("/some/dir", "/abc/1", "/abc/1");
-}
-
-void test_join_paths_4()
-{
-    assert_join_paths_res("", "abc/1", "abc/1");
-}
-
-void assert_join_paths_n_res(const char *path_l, const char *path_r, size_t buff_len, const char *expected_path = NULL, bool ret_error = false)
-{
-    char buff[128];
-    int ret_code = join_paths(buff, buff_len, path_l, path_r);
-    if (ret_error != 0) {
-        TEST_ASSERT_NOT_EQUAL(ret_code, 0);
-    } else {
-        TEST_ASSERT_EQUAL_STRING(expected_path, buff);
+    if ((dir_p = opendir(dir_path)) == NULL) {
+        TEST_FAIL();
+        return;
     }
-}
-
-void test_join_paths_n_1()
-{
-    assert_join_paths_n_res("/some/dir", "abc/1", 16, "/some/dir/abc/1", false);
-}
-
-void test_join_paths_n_2()
-{
-    assert_join_paths_n_res("/some/dir", "abc/1", 15, "/some/dir/abc/1", true);
-}
-
-void test_join_paths_n_3()
-{
-    assert_join_paths_n_res("/some/dir/", "abc/1", 16, "/some/dir/abc/1", false);
-}
-
-void test_join_paths_n_4()
-{
-    assert_join_paths_n_res("/some/dir/", "abc/1", 15, "/some/dir/abc/1", true);
-}
-
-void test_join_paths_n_5()
-{
-    assert_join_paths_n_res("/some/dir", "/abc/1", 7, "/abc/1", false);
-}
-
-void test_join_paths_n_6()
-{
-    assert_join_paths_n_res("/some/dir", "/abc/1", 6, "/abc/1", true);
-}
-
-void test_join_paths_n_7()
-{
-    assert_join_paths_n_res("", "abc/1", 6, "abc/1", false);
-}
-
-void test_join_paths_n_8()
-{
-    assert_join_paths_n_res("", "abc/1", 5, "abc/1", true);
-}
-
-void assert_append_paths_res(const char *path, const char *append, const char *expected_path)
-{
-    char buff[128];
-    strcpy(buff, path);
-    int ret_code = append_path(buff, append);
-    TEST_ASSERT_EQUAL(ret_code, 0);
-    TEST_ASSERT_EQUAL_STRING(expected_path, buff);
-}
-
-void test_append_paths_1()
-{
-    assert_append_paths_res("/some/dir", "abc/1", "/some/dir/abc/1");
-}
-
-void test_append_paths_2()
-{
-    assert_append_paths_res("/some/dir/", "abc/1", "/some/dir/abc/1");
-}
-
-void test_append_paths_3()
-{
-    assert_append_paths_res("/some/dir", "/abc/1", "/abc/1");
-}
-
-void test_append_paths_4()
-{
-    assert_append_paths_res("", "abc/1", "abc/1");
-}
-
-void assert_append_paths_n_res(const char *path, const char *append, size_t buff_len, const char *expected_path = NULL, bool ret_error = false)
-{
-    char buff[128];
-    strcpy(buff, path);
-    int ret_code = append_path(buff, buff_len, append);
-    if (ret_error) {
-        TEST_ASSERT_NOT_EQUAL(ret_code, 0);
-    } else {
-        TEST_ASSERT_EQUAL_STRING(expected_path, buff);
+    while ((dirent_p = readdir_child(dir_p))) {
+        num_files += 1;
     }
-}
-
-void test_append_paths_n_1()
-{
-    assert_append_paths_n_res("/some/dir", "abc/1", 16, "/some/dir/abc/1", false);
-}
-
-void test_append_paths_n_2()
-{
-    assert_append_paths_n_res("/some/dir", "abc/1", 15, "/some/dir/abc/1", true);
-}
-
-void test_append_paths_n_3()
-{
-    assert_append_paths_n_res("/some/dir/", "abc/1", 16, "/some/dir/abc/1", false);
-}
-
-void test_append_paths_n_4()
-{
-    assert_append_paths_n_res("/some/dir/", "abc/1", 15, "/some/dir/abc/1", true);
-}
-
-void test_append_paths_n_5()
-{
-    assert_append_paths_n_res("/some/dir", "/abc/1", 7, "/abc/1", false);
-}
-
-void test_append_paths_n_6()
-{
-    assert_append_paths_n_res("/some/dir", "/abc/1", 6, "/abc/1", true);
-}
-
-void test_append_paths_n_7()
-{
-    assert_append_paths_n_res("", "abc/1", 6, "abc/1", false);
-}
-
-void test_append_paths_n_8()
-{
-    assert_append_paths_n_res("", "abc/1", 5, "abc/1", true);
-}
-
-//--------------------------------------------------------------------------------
-// Test basename and dirname functions
-//--------------------------------------------------------------------------------
-void assert_basename_res(const char *expected, const char *path, bool ret_error = false)
-{
-    char name[32];
-    int err = basename(name, path);
-    if (ret_error) {
-        TEST_ASSERT_NOT_EQUAL(0, err);
-    } else {
-        TEST_ASSERT_EQUAL(0, err);
-        TEST_ASSERT_EQUAL_STRING(expected, name);
+    if (closedir(dir_p)) {
+        TEST_FAIL();
+        return;
     }
+
+    TEST_ASSERT_EQUAL(3, num_files);
 }
 
-void test_basename_1()
+void test_readdir_child_2()
 {
-    assert_basename_res("file.txt", "/sd/storage/file.txt");
-}
+    char dir_path[64];
+    join_paths(dir_path, BASE_DIR, "test_dir");
+    mkdir(dir_path, 0777);
 
-void test_basename_2()
-{
-    assert_basename_res("", "/sd/storage/file.txt/");
-}
+    int num_files = 0;
+    DIR *dir_p;
+    struct dirent *dirent_p;
 
-void test_basename_3()
-{
-    assert_basename_res("storage", "/sd/storage");
-}
-
-void test_basename_4()
-{
-    assert_basename_res("", "/sd/storage/");
-}
-
-void test_basename_5()
-{
-    assert_basename_res("", "/");
-}
-
-void test_basename_6()
-{
-    assert_basename_res("", "");
-}
-
-void assert_basename_n_res(const char *expected, const char *path, size_t n, bool ret_error = false)
-{
-    char name[32];
-    int err = basename(name, n, path);
-    if (ret_error) {
-        TEST_ASSERT_NOT_EQUAL(0, err);
-    } else {
-        TEST_ASSERT_EQUAL(0, err);
-        TEST_ASSERT_EQUAL_STRING(expected, name);
+    if ((dir_p = opendir(dir_path)) == NULL) {
+        TEST_FAIL();
+        return;
     }
-}
-
-void test_basename_n_1()
-{
-    assert_basename_n_res("file.txt", "/sd/storage/file.txt", 9, false);
-}
-
-void test_basename_n_2()
-{
-    assert_basename_n_res("file.txt", "/sd/storage/file.txt", 8, false);
-}
-
-void test_basename_n_3()
-{
-    assert_basename_n_res("file.txt", "/sd/storage/file.txt", 7, true);
-}
-
-void assert_dirname_same_res(const char *expected, const char *path, bool ret_error = false)
-{
-    char tmp_path[64];
-    strcpy(tmp_path, path);
-    int err = dirname(tmp_path);
-    if (ret_error) {
-        TEST_ASSERT_NOT_EQUAL(0, err);
-    } else {
-        TEST_ASSERT_EQUAL(0, err);
-        TEST_ASSERT_EQUAL_STRING(expected, tmp_path);
+    while ((dirent_p = readdir_child(dir_p))) {
+        num_files += 1;
     }
-}
-
-void test_dirname_same_1()
-{
-    assert_dirname_same_res("/sd/storage", "/sd/storage/file.txt");
-}
-
-void test_dirname_same_2()
-{
-    assert_dirname_same_res("/sd/storage", "/sd/storage/");
-}
-
-void test_dirname_same_3()
-{
-    assert_dirname_same_res("/", "/some_dir");
-}
-
-void test_dirname_same_4()
-{
-    assert_dirname_same_res("", "some_dir");
-}
-
-void test_dirname_same_5()
-{
-    assert_dirname_same_res("/", "/");
-}
-
-void test_dirname_same_6()
-{
-    assert_dirname_same_res("/fs", "/fs///some_dir");
-}
-
-void assert_dirname_res(const char *expected, const char *path, bool ret_error = false)
-{
-    char tmp_path[64];
-    int err = dirname(tmp_path, path);
-    if (ret_error) {
-        TEST_ASSERT_NOT_EQUAL(0, err);
-    } else {
-        TEST_ASSERT_EQUAL(0, err);
-        TEST_ASSERT_EQUAL_STRING(expected, tmp_path);
+    if (closedir(dir_p)) {
+        TEST_FAIL();
+        return;
     }
-}
 
-void test_dirname_1()
-{
-    assert_dirname_res("/sd/storage", "/sd/storage/file.txt");
-}
-
-void test_dirname_2()
-{
-    assert_dirname_res("/sd/storage", "/sd/storage/");
-}
-
-void test_dirname_3()
-{
-    assert_dirname_res("/", "/some_dir");
-}
-
-void test_dirname_4()
-{
-    assert_dirname_res("", "some_dir");
-}
-
-void test_dirname_5()
-{
-    assert_dirname_res("/", "/");
-}
-
-void test_dirname_6()
-{
-    assert_dirname_res("/fs", "/fs///some_dir");
-}
-
-void assert_dirname_n_res(const char *expected, const char *path, size_t n, bool ret_error = false)
-{
-    char tmp_path[64];
-    int err = dirname(tmp_path, n, path);
-    if (ret_error) {
-        TEST_ASSERT_NOT_EQUAL(0, err);
-    } else {
-        TEST_ASSERT_EQUAL(0, err);
-        TEST_ASSERT_EQUAL_STRING(expected, tmp_path);
-    }
-}
-
-void test_dirname_n_1()
-{
-    assert_dirname_n_res("/sd/storage", "/sd/storage/file.txt", 12, false);
-}
-
-void test_dirname_n_2()
-{
-    assert_dirname_n_res("/sd/storage", "/sd/storage/file.txt", 11, false);
-}
-
-void test_dirname_n_3()
-{
-    assert_dirname_n_res("/sd/storage", "/sd/storage/file.txt", 10, true);
-}
-
-//--------------------------------------------------------------------------------
-// Test readdir assistant functions
-//--------------------------------------------------------------------------------
-void assert_is_child_dirent_name(bool expected, const char *name)
-{
-    bool res = is_child_dirent(name);
-    if (expected) {
-        TEST_ASSERT_TRUE(res);
-    } else {
-        TEST_ASSERT_FALSE(res);
-    }
-}
-
-void assert_is_child_dirent_dirent(bool expected, const char *name)
-{
-    struct dirent dir_ent;
-    strcpy(dir_ent.d_name, name);
-    dir_ent.d_type = DT_UNKNOWN;
-
-    bool res = is_child_dirent(&dir_ent);
-    if (expected) {
-        TEST_ASSERT_TRUE(res);
-    } else {
-        TEST_ASSERT_FALSE(res);
-    }
-}
-
-void test_is_child_dirent_1()
-{
-    assert_is_child_dirent_name(true, "ABC");
-    assert_is_child_dirent_dirent(true, "ABC");
-    assert_is_child_dirent_name(true, "test.txt");
-    assert_is_child_dirent_dirent(true, "test.txt");
-    assert_is_child_dirent_name(true, ".env");
-    assert_is_child_dirent_dirent(true, ".env");
-    assert_is_child_dirent_name(true, "12");
-    assert_is_child_dirent_dirent(true, "12");
-    assert_is_child_dirent_name(true, "?");
-    assert_is_child_dirent_dirent(true, "?");
-    assert_is_child_dirent_name(true, "...");
-    assert_is_child_dirent_dirent(true, "...");
-    assert_is_child_dirent_name(true, "");
-    assert_is_child_dirent_dirent(true, "");
-}
-
-void test_is_child_dirent_2()
-{
-    assert_is_child_dirent_name(false, ".");
-    assert_is_child_dirent_dirent(false, ".");
-    assert_is_child_dirent_name(false, "..");
-    assert_is_child_dirent_dirent(false, "..");
+    TEST_ASSERT_EQUAL(0, num_files);
 }
 
 // test cases description
-#define SimpleCase(test_fun) Case(#test_fun, test_fun, greentea_case_failure_continue_handler)
+#define FSSimpleCase(test_fun) Case(#test_fun, case_setup_handler, test_fun, case_teardown_handler, greentea_case_failure_continue_handler)
 Case cases[] = {
-    SimpleCase(test_normpath_simple_1),
-    SimpleCase(test_normpath_collapse_dot_1),
-    SimpleCase(test_normpath_collapse_dot_2),
-    SimpleCase(test_normpath_collapse_sep_1),
-    SimpleCase(test_normpath_collapse_sep_2),
-    SimpleCase(test_normpath_collapse_dotdot_1),
-    SimpleCase(test_normpath_collapse_dotdot_2),
-    SimpleCase(test_normpath_collapse_dotdot_3),
-    SimpleCase(test_normpath_collapse_dotdot_4),
-    SimpleCase(test_normpath_collapse_dotdot_5),
-    SimpleCase(test_normpath_collapse_dotdot_6),
-    SimpleCase(test_normpath_collapse_dotdot_7),
-    SimpleCase(test_normpath_collapse_dotdot_8),
-    SimpleCase(test_normpath_collapse_dotdot_9),
-    SimpleCase(test_normpath_collapse_dot_sep_1),
-    SimpleCase(test_normpath_collapse_dot_sep_2),
-    SimpleCase(test_normpath_collapse_dot_sep_3),
-    SimpleCase(test_normpath_collapse_dot_sep_4),
-    SimpleCase(test_normpath_collapse_dot_sep_5),
-    SimpleCase(test_normpath_collapse_mix_1),
-    SimpleCase(test_normpath_empty_1),
-
-    SimpleCase(test_isabs_1),
-    SimpleCase(test_isabs_2),
-    SimpleCase(test_isabs_3),
-    SimpleCase(test_isabs_4),
-    SimpleCase(test_isabs_5),
-    SimpleCase(test_join_paths_1),
-    SimpleCase(test_join_paths_2),
-    SimpleCase(test_join_paths_3),
-    SimpleCase(test_join_paths_4),
-    SimpleCase(test_join_paths_n_1),
-    SimpleCase(test_join_paths_n_2),
-    SimpleCase(test_join_paths_n_3),
-    SimpleCase(test_join_paths_n_4),
-    SimpleCase(test_join_paths_n_5),
-    SimpleCase(test_join_paths_n_6),
-    SimpleCase(test_join_paths_n_7),
-    SimpleCase(test_join_paths_n_8),
-    SimpleCase(test_append_paths_1),
-    SimpleCase(test_append_paths_2),
-    SimpleCase(test_append_paths_3),
-    SimpleCase(test_append_paths_4),
-    SimpleCase(test_append_paths_n_1),
-    SimpleCase(test_append_paths_n_2),
-    SimpleCase(test_append_paths_n_3),
-    SimpleCase(test_append_paths_n_4),
-    SimpleCase(test_append_paths_n_5),
-    SimpleCase(test_append_paths_n_6),
-    SimpleCase(test_append_paths_n_7),
-    SimpleCase(test_append_paths_n_8),
-
-    SimpleCase(test_basename_1),
-    SimpleCase(test_basename_2),
-    SimpleCase(test_basename_3),
-    SimpleCase(test_basename_4),
-    SimpleCase(test_basename_5),
-    SimpleCase(test_basename_6),
-    SimpleCase(test_basename_n_1),
-    SimpleCase(test_basename_n_2),
-    SimpleCase(test_basename_n_3),
-    SimpleCase(test_dirname_same_1),
-    SimpleCase(test_dirname_same_2),
-    SimpleCase(test_dirname_same_3),
-    SimpleCase(test_dirname_same_4),
-    SimpleCase(test_dirname_same_5),
-    SimpleCase(test_dirname_same_6),
-    SimpleCase(test_dirname_1),
-    SimpleCase(test_dirname_2),
-    SimpleCase(test_dirname_3),
-    SimpleCase(test_dirname_4),
-    SimpleCase(test_dirname_5),
-    SimpleCase(test_dirname_6),
-    SimpleCase(test_dirname_n_1),
-    SimpleCase(test_dirname_n_2),
-    SimpleCase(test_dirname_n_3),
-
-    SimpleCase(test_is_child_dirent_1),
-    SimpleCase(test_is_child_dirent_2),
+    FSSimpleCase(test_write_data_1),
+    FSSimpleCase(test_read_data_1),
+    FSSimpleCase(test_write_str_1),
+    FSSimpleCase(test_read_str_1),
+    FSSimpleCase(test_makedirs_1),
+    FSSimpleCase(test_rmtree_1),
+    FSSimpleCase(test_rmtree_2),
+    FSSimpleCase(test_rmtree_3),
+    FSSimpleCase(test_rmtree_4),
+    FSSimpleCase(test_cleartree_1),
+    FSSimpleCase(test_cleartree_2),
+    FSSimpleCase(test_cleartree_3),
+    FSSimpleCase(test_isdir_1),
+    FSSimpleCase(test_isfile_1),
+    FSSimpleCase(test_exists_1),
+    FSSimpleCase(test_getsize_1),
+    FSSimpleCase(test_readdir_child_1),
+    FSSimpleCase(test_readdir_child_2),
 };
 Specification specification(greentea_test_setup_handler, cases, greentea_test_teardown_handler);
 

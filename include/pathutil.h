@@ -17,6 +17,17 @@ namespace pathutil {
 int rmtree(const char *path, char *buff = NULL, size_t buff_len = 0);
 
 /**
+ * Remove directory content recursively.
+ *
+ * @param path directory path
+ * @param buff helper buffer to internal operations (it should have size that is enough for longes path in the directory).
+ *             If it isn't set, it will be allocated dynamically.
+ * @param bull_len length of internal buffer.
+ * @return 0, if directory content has been deleted successfully, otherwise non-zero value.
+ */
+int cleartree(const char *path, char *buff = NULL, size_t buff_len = 0);
+
+/**
  * Create directory and parent one, if they are missed.
  *
  * @param path
