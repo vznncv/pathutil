@@ -5,7 +5,7 @@ using namespace pathutil;
 
 #define SEP '/'
 
-static int rmtree_impl(char *path_buff, size_t path_len, size_t buff_len)
+static int rmtree_recursive_impl(char *path_buff, size_t path_len, size_t buff_len, bool remove_dir = true)
 {
     DIR *dir;
     struct dirent *dir_entity;
@@ -24,7 +24,7 @@ static int rmtree_impl(char *path_buff, size_t path_len, size_t buff_len)
     // remove directory content
     while ((dir_entity = readdir(dir)) != NULL) {
         // ignore special entries "." and ".."
-        if (!strcmp(dir_entity->d_name, ".") || !strcmp(dir_entity->d_name, "..")) {
+        if (!is_child_dirent(dir_entity->d_name)) {
             continue;
         }
         // delete content
@@ -42,7 +42,7 @@ static int rmtree_impl(char *path_buff, size_t path_len, size_t buff_len)
         // remove directory item
         switch (de_type) {
         case DT_DIR:
-            ret_code = rmtree_impl(path_buff, sub_path_len, buff_len);
+            ret_code = rmtree_recursive_impl(path_buff, sub_path_len, buff_len);
             break;
         case DT_REG:
         case DT_LNK:
@@ -69,7 +69,7 @@ static int rmtree_impl(char *path_buff, size_t path_len, size_t buff_len)
     }
 
     // remove directory itself
-    if (!ret_code) {
+    if (!ret_code && remove_dir) {
         ret_code = remove(path_buff);
     }
 
@@ -78,7 +78,7 @@ static int rmtree_impl(char *path_buff, size_t path_len, size_t buff_len)
 
 #define DEFAULT_RMTREE_BUFF_SIZE 256
 
-int pathutil::rmtree(const char *path, char *buff, size_t buff_len)
+static int rmtree_impl(const char *path, char *buff, size_t buff_len, bool remove_dir = true)
 {
     bool cleanup_buff = false;
     int ret_code = 0;
@@ -102,12 +102,22 @@ int pathutil::rmtree(const char *path, char *buff, size_t buff_len)
     }
     strcpy(buff, path);
 
-    ret_code = rmtree_impl(buff, path_len, buff_len);
+    ret_code = rmtree_recursive_impl(buff, path_len, buff_len, remove_dir);
 
     if (cleanup_buff) {
         delete[] buff;
     }
     return ret_code;
+}
+
+int pathutil::rmtree(const char *path, char *buff, size_t buff_len)
+{
+    return rmtree_impl(path, buff, buff_len, true);
+}
+
+int pathutil::cleartree(const char *path, char *buff, size_t buff_len)
+{
+    return rmtree_impl(path, buff, buff_len, false);
 }
 
 int pathutil::makedirs(const char *path, mode_t mode, bool exists_ok, char *buff, size_t buff_len)
