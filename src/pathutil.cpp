@@ -558,61 +558,77 @@ struct dirent *pathutil::readdir_child(DIR *dirp)
 
 int pathutil::write_data(const char *path, const uint8_t *data, size_t len)
 {
-    FILE *file;
+    int file;
     int ret_code = 0;
     int close_ret_code = 0;
     size_t write_res;
 
-    if ((file = fopen(path, "wb")) == NULL) {
+    if ((file = open(path, O_WB_FLAG)) < 0) {
         return -1;
     }
 
-    write_res = fwrite(data, sizeof(uint8_t), len, file);
+    write_res = write(file, data, len);
     if (write_res != len) {
         ret_code = -1;
-        errno = EIO;
     }
 
-    close_ret_code = fclose(file);
+    close_ret_code = close(file);
     if (close_ret_code && !ret_code) {
         ret_code = close_ret_code;
     }
+
+    if (ret_code && !errno) {
+        errno = EIO;
+    }
+
     return ret_code;
 }
 
 int pathutil::read_data(const char *path, uint8_t *data, size_t len)
 {
-    FILE *file;
+    int file;
     int ret_code = 0;
     int close_ret_code = 0;
+    off_t seek_res;
     int read_size = 0;
     int file_size = 0;
 
-    if ((file = fopen(path, "rb")) == NULL) {
+    if ((file = open(path, O_RB_FLAG)) < 0) {
         return -1;
     }
 
     // get file size
-    fseek(file, 0, SEEK_END);
-    file_size = ftell(file);
-    rewind(file);
-
-    if (file_size < 0) {
+    seek_res = lseek(file, 0, SEEK_END);
+    if (seek_res < 0) {
         ret_code = -1;
-        errno = EIO;
+    } else {
+        file_size = seek_res;
+        seek_res = lseek(file, 0, SEEK_SET);
+        if (seek_res < 0) {
+            ret_code = -1;
+        }
+    }
+    if (ret_code < 0) {
+        close(file);
+        if (!errno) {
+            errno = EIO;
+        }
+        return ret_code;
+    }
 
-    } else if ((size_t)file_size > len) {
+    // read data
+    if ((size_t)file_size > len) {
         ret_code = -1;
         errno = ENOBUFS;
     } else {
-        read_size = (int)fread(data, sizeof(uint8_t), len, file);
+        read_size = read(file, data, len);
         if (read_size != file_size) {
             ret_code = -1;
             errno = EIO;
         }
     }
 
-    close_ret_code = fclose(file);
+    close_ret_code = close(file);
     if (close_ret_code && !ret_code) {
         ret_code = close_ret_code;
     }

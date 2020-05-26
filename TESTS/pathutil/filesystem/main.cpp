@@ -77,11 +77,12 @@ void test_write_data_1()
     write_data(file_path, data, data_len);
 
     // read test data
-    FILE *file = fopen(file_path, "r");
-    TEST_ASSERT_NOT_NULL(file);
+    int file = open(file_path, O_RB_FLAG);
+    TEST_ASSERT_TRUE(file >= 0);
     const size_t read_buff_len = 32;
     uint8_t read_buff[read_buff_len];
-    size_t read_len = fread(read_buff, 1, read_buff_len, file);
+    size_t read_len = read(file, read_buff, read_buff_len);
+    close(file);
     // check read results
     TEST_ASSERT_EQUAL_UINT(data_len, read_len);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(data, read_buff, data_len);
@@ -96,10 +97,10 @@ void test_read_data_1()
     // write test data
     const size_t data_len = 12;
     const uint8_t data[data_len] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 7, 6, 5 };
-    FILE *file = fopen(file_path, "w");
-    TEST_ASSERT_NOT_NULL(file);
-    fwrite(data, 1, data_len, file);
-    fclose(file);
+    int file = open(file_path, O_WB_FLAG);
+    TEST_ASSERT_TRUE(file >= 0);
+    write(file, data, data_len);
+    close(file);
     TEST_ASSERT_EQUAL(0, errno);
 
     // read test data
@@ -123,11 +124,12 @@ void test_write_str_1()
     write_str(file_path, text);
 
     // read test data
-    FILE *file = fopen(file_path, "r");
-    TEST_ASSERT_NOT_NULL(file);
+    int file = open(file_path, O_RB_FLAG);
+    TEST_ASSERT_TRUE(file >= 0);
     const size_t read_buff_len = 32;
     char read_buff[read_buff_len];
-    size_t read_len = fread(read_buff, 1, read_buff_len, file);
+    size_t read_len = read(file, read_buff, read_buff_len);
+    close(file);
     read_buff[read_len] = '\0';
     // check read results
     TEST_ASSERT_EQUAL(text_len, read_len);
@@ -143,10 +145,10 @@ void test_read_str_1()
     // write test data
     const char *text = "hello world";
     const size_t text_len = strlen(text);
-    FILE *file = fopen(file_path, "w");
-    TEST_ASSERT_NOT_NULL(file);
-    fwrite(text, 1, text_len, file);
-    fclose(file);
+    int file = open(file_path, O_WB_FLAG);
+    TEST_ASSERT_TRUE(file >= 0);
+    write(file, text, text_len);
+    close(file);
     TEST_ASSERT_EQUAL(0, errno);
 
     // read test data
