@@ -221,6 +221,16 @@ int write_data(const char *path, const uint8_t *data, size_t len);
 int read_data(const char *path, uint8_t *data, size_t len);
 
 /**
+ * "wb" and "rb" equivalent flags for @c open function.
+ */
+enum OpenFlag {
+    // "wb" equivalent for @c open function
+    O_WB_FLAG = O_CREAT | O_TRUNC | O_WRONLY,
+    // "rb" equivalent for @c open function
+    O_RB_FLAG = O_RDONLY,
+};
+
+/**
  * Write ordinary \c char string to a file.
  *
  * @param path file path
